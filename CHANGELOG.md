@@ -10,3 +10,5 @@
 - Reject null, recursive, aliased or non-executable `UpdateCombat` targets.
 - Bind publication to the validated state and verify rollback and page
   protection outcomes.
+- Remove the misplaced E4 hook before changing its call chain, then publish
+  the corrected E6 hook last.

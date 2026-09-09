@@ -37,6 +37,10 @@ rollback; the patch never deliberately overwrites a newer value. Every page
 protection transition and residual pointer state is checked before the log
 describes the outcome as committed or restored.
 
+The misplaced E4 hook is removed before its stored original is changed. The
+corrected E6 hook is published last, so the thunk is never intentionally live
+with an original function from the wrong virtual slot.
+
 This package does not redistribute or modify NPC Spell Variance files. Install
 it as a separate mod after NPC Spell Variance. Remove this patch after NPC
 Spell Variance publishes and you install a release with a runtime-aware VR

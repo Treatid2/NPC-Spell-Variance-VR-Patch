@@ -65,22 +65,22 @@ template <class Backend>
             false, false, protectionsRestored};
   }
 
+  bool changedGetAlpha = false;
   bool changedStorage = false;
   bool changedUpdateCombat = false;
-  bool changedGetAlpha = false;
 
-  changedStorage = a_backend.CompareExchange(PointerLocation::kStoredOriginal,
-                                             a_observed.storedOriginal,
-                                             a_plan.storedOriginal);
+  // Make the misplaced thunk unreachable before changing its call chain.
+  changedGetAlpha = a_backend.CompareExchange(
+      PointerLocation::kGetAlpha, a_observed.currentGetAlpha, a_plan.getAlpha);
+  if (changedGetAlpha) {
+    changedStorage = a_backend.CompareExchange(PointerLocation::kStoredOriginal,
+                                               a_observed.storedOriginal,
+                                               a_plan.storedOriginal);
+  }
   if (changedStorage) {
     changedUpdateCombat = a_backend.CompareExchange(
         PointerLocation::kUpdateCombat, a_observed.currentUpdateCombat,
         a_plan.updateCombat);
-  }
-  if (changedUpdateCombat) {
-    changedGetAlpha =
-        a_backend.CompareExchange(PointerLocation::kGetAlpha,
-                                  a_observed.currentGetAlpha, a_plan.getAlpha);
   }
 
   if (changedStorage && changedUpdateCombat && changedGetAlpha &&
@@ -92,11 +92,6 @@ template <class Backend>
   }
 
   // Undo only values still owned by this attempt; never overwrite a later hook.
-  if (changedGetAlpha) {
-    static_cast<void>(a_backend.CompareExchange(PointerLocation::kGetAlpha,
-                                                a_plan.getAlpha,
-                                                a_observed.currentGetAlpha));
-  }
   if (changedUpdateCombat) {
     static_cast<void>(a_backend.CompareExchange(
         PointerLocation::kUpdateCombat, a_plan.updateCombat,
@@ -106,6 +101,11 @@ template <class Backend>
     static_cast<void>(a_backend.CompareExchange(
         PointerLocation::kStoredOriginal, a_plan.storedOriginal,
         a_observed.storedOriginal));
+  }
+  if (changedGetAlpha) {
+    static_cast<void>(a_backend.CompareExchange(PointerLocation::kGetAlpha,
+                                                a_plan.getAlpha,
+                                                a_observed.currentGetAlpha));
   }
 
   const bool pointersRestored = matchesObserved();

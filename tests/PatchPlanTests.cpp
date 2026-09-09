@@ -180,11 +180,11 @@ int main() {
   }
 
   FakeBackend failedRecovery(valid);
+  failedRecovery.failCompareExchangeCall[Index(
+      nsv_patch::PointerLocation::kUpdateCombat)] = 1;
   failedRecovery
       .failCompareExchangeCall[Index(nsv_patch::PointerLocation::kGetAlpha)] =
-      1;
-  failedRecovery.failCompareExchangeCall[Index(
-      nsv_patch::PointerLocation::kStoredOriginal)] = 2;
+      2;
   const auto recovery = nsv_patch::ApplyPatch(failedRecovery, valid, plan);
   passed &=
       Check(recovery.status == nsv_patch::ApplyStatus::kRecoveryIncomplete,
