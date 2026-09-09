@@ -87,6 +87,12 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
+## Packaging
+
+Nexus packages include the complete tracked source tree as ordinary files
+under `Source\`. Do not embed a source ZIP, 7z or other archive inside the
+distributable archive; Nexus scanning may reject nested archives.
+
 ## License
 
 NPC Spell Variance VR Patch is licensed under GPL-3.0-or-later. NPC Spell
