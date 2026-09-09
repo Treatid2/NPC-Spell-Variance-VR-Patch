@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
     NPCSpellVarianceVRPatch
-    VERSION 1.0.1
+    VERSION 1.0.2
     DESCRIPTION "Repair the NPC Spell Variance 2.7.0 UpdateCombat hook on Skyrim VR"
     LANGUAGES CXX)
 

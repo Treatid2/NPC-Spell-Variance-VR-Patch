@@ -419,17 +419,32 @@ private:
                      "overwritten.");
     return false;
   case nsv_patch::ApplyStatus::kProtectionPreparationFailed:
-    logger::critical("Unable to prepare writable hook storage; pointer state "
-                     "was unchanged and page protections were restored.");
+    if (result.pointersMatchObserved) {
+      logger::critical("Unable to prepare writable hook storage; verified "
+                       "pointer state was unchanged and page protections "
+                       "were restored.");
+    } else {
+      logger::critical("Unable to prepare writable hook storage; no pointer "
+                       "publication was attempted, but hook state changed "
+                       "after validation.");
+    }
     return false;
   case nsv_patch::ApplyStatus::kPublishFailedRolledBack:
     logger::critical("Conditional hook publication failed; verified original "
                      "pointer state and page protections were restored.");
     return false;
   case nsv_patch::ApplyStatus::kRecoveryIncomplete:
-    logger::critical("Hook publication failed and another writer prevented a "
-                     "complete rollback. Restart Skyrim before continuing; "
-                     "the residual pointer state was not reported as safe.");
+    if (result.protectionsRestored) {
+      logger::critical(
+          "Hook publication failed and another writer prevented a complete "
+          "rollback. Page protections were restored, but restart Skyrim "
+          "before continuing; the residual pointer state is not safe.");
+    } else {
+      logger::critical(
+          "Hook publication failed and another writer prevented a complete "
+          "rollback. Page-protection recovery also failed. Restart Skyrim "
+          "before continuing; the residual state is not safe.");
+    }
     return false;
   case nsv_patch::ApplyStatus::kProtectionRestoreFailed:
     if (result.pointersMatchPlan) {
