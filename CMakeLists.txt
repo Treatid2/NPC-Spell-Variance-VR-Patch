@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
     NPCSpellVarianceVRPatch
-    VERSION 1.0.0
+    VERSION 1.0.1
     DESCRIPTION "Repair the NPC Spell Variance 2.7.0 UpdateCombat hook on Skyrim VR"
     LANGUAGES CXX)
 
@@ -53,6 +53,7 @@ add_commonlibsse_plugin(
     COMPATIBLE_RUNTIMES 1.4.15
     STRUCT_DEPENDENT
     SOURCES
+        src/AtomicPointerRead.h
         src/BinaryIdentity.h
         src/main.cpp
         src/PatchPlan.h
@@ -72,6 +73,13 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     OUTPUT_NAME "NPCSpellVarianceVRPatch")
 
 if(BUILD_TESTING)
+    add_executable(AtomicPointerReadTests tests/AtomicPointerReadTests.cpp)
+    target_compile_features(AtomicPointerReadTests PRIVATE cxx_std_23)
+    target_include_directories(AtomicPointerReadTests PRIVATE src)
+    target_compile_options(AtomicPointerReadTests PRIVATE
+        $<$<CXX_COMPILER_ID:MSVC>:/W4 /WX /permissive- /EHsc /utf-8>)
+    add_test(NAME AtomicPointerReadTests COMMAND AtomicPointerReadTests)
+
     add_executable(PatchPlanTests tests/PatchPlanTests.cpp)
     target_compile_features(PatchPlanTests PRIVATE cxx_std_23)
     target_include_directories(PatchPlanTests PRIVATE src)

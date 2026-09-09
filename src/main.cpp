@@ -1,3 +1,4 @@
+#include "AtomicPointerRead.h"
 #include "BinaryIdentity.h"
 #include "PatchPlan.h"
 #include "PatchTransaction.h"
@@ -271,9 +272,7 @@ public:
 
   [[nodiscard]] std::uintptr_t
   Read(nsv_patch::PointerLocation a_location) const noexcept {
-    auto *target = Resolve(a_location);
-    return reinterpret_cast<std::uintptr_t>(InterlockedCompareExchangePointer(
-        reinterpret_cast<void *volatile *>(target), nullptr, nullptr));
+    return nsv_patch::AtomicLoadPointer(Resolve(a_location));
   }
 
   [[nodiscard]] bool CompareExchange(nsv_patch::PointerLocation a_location,
@@ -466,7 +465,7 @@ void OnSKSEMessage(SKSE::MessagingInterface::Message *a_message) {
 SKSEPluginLoad(const SKSE::LoadInterface *a_skse) {
   SKSE::Init(a_skse);
   logger::init();
-  logger::info("NPC Spell Variance VR Patch 1.0.0 loading.");
+  logger::info("NPC Spell Variance VR Patch 1.0.1 loading.");
 
   auto *messaging = SKSE::GetMessagingInterface();
   if (!messaging || !messaging->RegisterListener(OnSKSEMessage)) {

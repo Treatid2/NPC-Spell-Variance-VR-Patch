@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1 - 2026-09-09
+
+- Replace a compare/exchange-based pointer observation with a true atomic load.
+- Avoid an access violation while validating Skyrim's read-only vtable pages.
+- Exercise the pointer observation against a `PAGE_READONLY` allocation.
+
 ## 1.0.0 - 2026-09-08
 
 - Restore Skyrim VR `Character::GetAlpha` at vtable slot `0xE4`.
