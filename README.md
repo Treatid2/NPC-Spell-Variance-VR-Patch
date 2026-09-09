@@ -25,8 +25,17 @@ original-function target so it chains the real VR `UpdateCombat` implementation.
 - Address Library for SKSE Plugins is required by CommonLibSSE-NG.
 
 The patch is intentionally tied to the released 2.7.0 DLL identity, code
-signature, hook pointer and preserved original function. If any precondition
-does not match, it logs the mismatch and changes nothing.
+signature, hook pointer and preserved original function. Its exact supported
+DLL SHA-256 is
+`F1CB34F26F49FAFCB981CA55FA83E9119E606BBCE93D7A135C60DCDEEAD47CD6`.
+If any precondition does not match, it logs the mismatch and changes nothing.
+
+The existing VR `UpdateCombat` target must also be a distinct executable
+address. Pointer publication uses compare/exchange operations bound to the
+state that was validated. A competing hook causes a no-op or a conditional
+rollback; the patch never deliberately overwrites a newer value. Every page
+protection transition and residual pointer state is checked before the log
+describes the outcome as committed or restored.
 
 This package does not redistribute or modify NPC Spell Variance files. Install
 it as a separate mod after NPC Spell Variance. Remove this patch after NPC
@@ -46,6 +55,8 @@ Variance.
 The released NPC Spell Variance 2.7.0 DLL and its matching PDB show:
 
 - PE timestamp `0x6A6A6035`, image size `0xC6000`;
+- complete DLL SHA-256
+  `F1CB34F26F49FAFCB981CA55FA83E9119E606BBCE93D7A135C60DCDEEAD47CD6`;
 - `ActorHook::UpdateCombat(RE::Actor*)` at RVA `0x34840`;
 - installation of that thunk at vtable byte offset `0x720` (`0xE4 * 8`);
 - original-function storage at RVA `0xBD540`.

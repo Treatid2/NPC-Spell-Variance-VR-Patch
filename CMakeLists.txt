@@ -53,8 +53,10 @@ add_commonlibsse_plugin(
     COMPATIBLE_RUNTIMES 1.4.15
     STRUCT_DEPENDENT
     SOURCES
+        src/BinaryIdentity.h
         src/main.cpp
-        src/PatchPlan.h)
+        src/PatchPlan.h
+        src/PatchTransaction.h)
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 target_compile_definitions(${PROJECT_NAME} PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -64,6 +66,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
     /FI"${CMAKE_CURRENT_SOURCE_DIR}/src/pch.h">)
 target_link_options(${PROJECT_NAME} PRIVATE
     $<$<CXX_COMPILER_ID:MSVC>:/DEBUG:FULL>)
+target_link_libraries(${PROJECT_NAME} PRIVATE bcrypt)
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     OUTPUT_NAME "NPCSpellVarianceVRPatch")

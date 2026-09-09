@@ -18,6 +18,7 @@ enum class PlanStatus {
   kUnsupportedBuild,
   kUnexpectedGetAlphaHook,
   kUnexpectedOriginalGetAlpha,
+  kUnsafeUpdateCombatChain,
   kAlreadyApplied,
 };
 
@@ -29,6 +30,8 @@ struct ObservedState {
   std::uintptr_t currentGetAlpha;
   std::uintptr_t currentUpdateCombat;
   std::uintptr_t storedOriginal;
+  bool currentUpdateCombatExecutable;
+  bool storedOriginalExecutable;
 };
 
 struct PatchPlan {
@@ -38,18 +41,26 @@ struct PatchPlan {
   std::uintptr_t storedOriginal;
 };
 
-[[nodiscard]] constexpr PatchPlan MakePatchPlan(
-    const ObservedState &a_state) noexcept {
+[[nodiscard]] constexpr PatchPlan
+MakePatchPlan(const ObservedState &a_state) noexcept {
   const auto expectedThunk = a_state.nsvBase + kUpdateCombatThunkRva;
   const auto expectedGetAlpha = a_state.skyrimBase + kSkyrimGetAlphaRva;
+  const auto isSafeChainTarget = [&](std::uintptr_t a_target,
+                                     bool a_executable) {
+    return a_executable && a_target != 0 && a_target != expectedThunk &&
+           a_target != expectedGetAlpha;
+  };
 
   if (a_state.timestamp != kExpectedTimestamp ||
       a_state.imageSize != kExpectedImageSize) {
     return {PlanStatus::kUnsupportedBuild, 0, 0, 0};
   }
   if (a_state.currentGetAlpha == expectedGetAlpha &&
-      a_state.currentUpdateCombat == expectedThunk &&
-      a_state.storedOriginal != expectedGetAlpha) {
+      a_state.currentUpdateCombat == expectedThunk) {
+    if (!isSafeChainTarget(a_state.storedOriginal,
+                           a_state.storedOriginalExecutable)) {
+      return {PlanStatus::kUnsafeUpdateCombatChain, 0, 0, 0};
+    }
     return {PlanStatus::kAlreadyApplied, a_state.currentGetAlpha,
             a_state.currentUpdateCombat, a_state.storedOriginal};
   }
@@ -58,6 +69,10 @@ struct PatchPlan {
   }
   if (a_state.storedOriginal != expectedGetAlpha) {
     return {PlanStatus::kUnexpectedOriginalGetAlpha, 0, 0, 0};
+  }
+  if (!isSafeChainTarget(a_state.currentUpdateCombat,
+                         a_state.currentUpdateCombatExecutable)) {
+    return {PlanStatus::kUnsafeUpdateCombatChain, 0, 0, 0};
   }
 
   return {PlanStatus::kReady, expectedGetAlpha, expectedThunk,

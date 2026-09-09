@@ -6,3 +6,7 @@
 - Move the NPC Spell Variance 2.7.0 `UpdateCombat` hook to VR slot `0xE6`.
 - Preserve hook chaining with any function already installed at `0xE6`.
 - Fail closed on unsupported DLLs, altered hook state or signature mismatch.
+- Require the exact supported DLL hash and safely bounded mapped-memory reads.
+- Reject null, recursive, aliased or non-executable `UpdateCombat` targets.
+- Bind publication to the validated state and verify rollback and page
+  protection outcomes.
