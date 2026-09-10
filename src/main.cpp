@@ -2,6 +2,7 @@
 #include "BinaryIdentity.h"
 #include "PatchPlan.h"
 #include "PatchTransaction.h"
+#include "StartupPolicy.h"
 
 namespace {
 
@@ -430,12 +431,20 @@ private:
     }
     return false;
   case nsv_patch::ApplyStatus::kPublishIncomplete:
-    logger::critical(
-        "Hook publication did not complete. Page protections were restored "
-        "and the final pointer snapshot was not the complete correction. "
-        "No rollback was attempted because reversing a partial publication "
-        "could expose the misplaced thunk with an incompatible call chain. "
-        "Restart Skyrim before continuing.");
+    if (result.pointersMatchPlan) {
+      logger::critical(
+          "Hook publication lost ownership of a conditional write, although "
+          "the final pointer snapshot matches the complete correction. "
+          "Startup remains blocked because this attempt did not establish "
+          "that state. Restart Skyrim before continuing.");
+    } else {
+      logger::critical(
+          "Hook publication did not complete. Page protections were restored "
+          "and the final pointer snapshot was not the complete correction. "
+          "No rollback was attempted because reversing a partial publication "
+          "could expose the misplaced thunk with an incompatible call chain. "
+          "Restart Skyrim before continuing.");
+    }
     return false;
   case nsv_patch::ApplyStatus::kProtectionRestoreFailed:
     if (result.pointersMatchPlan) {
@@ -459,11 +468,14 @@ private:
 }
 
 void OnSKSEMessage(SKSE::MessagingInterface::Message *a_message) {
-  if (a_message->type != SKSE::MessagingInterface::kPostLoad ||
-      g_attempted.exchange(true)) {
-    return;
-  }
-  static_cast<void>(InstallPatch());
+  nsv_patch::HandlePostLoadInstallation(
+      a_message->type == SKSE::MessagingInterface::kPostLoad, g_attempted,
+      [] { return InstallPatch(); },
+      [] {
+        SKSE::stl::report_and_fail(
+            "NPC Spell Variance VR Patch could not establish a safe hook "
+            "state. Skyrim cannot continue; see the SKSE plugin log.");
+      });
 }
 
 } // namespace

@@ -38,6 +38,11 @@ observed, publication stops without overwriting it. The patch deliberately
 does not roll back a partial publication because reversing dependent pointers
 can re-expose the misplaced thunk with an incompatible call chain.
 
+An unsuccessful installation is fatal during `kPostLoad`: the patch displays a
+CommonLib fatal-error dialog and terminates Skyrim before gameplay can begin.
+This includes unsupported prerequisites, incomplete publication, and page
+protection recovery failure.
+
 The three pointer changes are not a lock-free multi-word transaction. They
 rely on SKSE's serialized post-load listener dispatch; plugins that modify the
 same hook storage concurrently from private worker threads are unsupported.

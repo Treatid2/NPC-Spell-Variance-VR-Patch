@@ -7,6 +7,8 @@
 - Document the serialized SKSE post-load boundary instead of promising an
   impossible lock-free transaction across three independently written slots.
 - Capture terminal pointer flags after page-protection restoration.
+- Abort Skyrim during post-load when a safe correction cannot be established.
+- Distinguish a failed conditional write from its final pointer snapshot.
 - Report pointer drift during writable-page preparation without claiming the
   earlier tuple was verified.
 - Retain simultaneous pointer and page-protection recovery failures in the

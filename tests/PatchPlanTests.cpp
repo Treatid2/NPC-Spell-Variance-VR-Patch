@@ -1,9 +1,12 @@
 #include "BinaryIdentity.h"
 #include "PatchPlan.h"
 #include "PatchTransaction.h"
+#include "StartupPolicy.h"
 
 #include <array>
+#include <atomic>
 #include <iostream>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -126,6 +129,65 @@ struct FakeBackend {
 
 int main() {
   bool passed = true;
+
+  std::atomic_bool successfulAttempted{false};
+  int successfulInstallerCalls = 0;
+  int unexpectedFailureCalls = 0;
+  nsv_patch::HandlePostLoadInstallation(
+      true, successfulAttempted,
+      [&] {
+        ++successfulInstallerCalls;
+        return true;
+      },
+      [&] { ++unexpectedFailureCalls; });
+  nsv_patch::HandlePostLoadInstallation(
+      true, successfulAttempted,
+      [&] {
+        ++successfulInstallerCalls;
+        return true;
+      },
+      [&] { ++unexpectedFailureCalls; });
+  passed &= Check(successfulInstallerCalls == 1 &&
+                      unexpectedFailureCalls == 0,
+                  "successful post-load installation runs exactly once");
+
+  std::atomic_bool ignoredEventAttempted{false};
+  int ignoredInstallerCalls = 0;
+  nsv_patch::HandlePostLoadInstallation(
+      false, ignoredEventAttempted,
+      [&] {
+        ++ignoredInstallerCalls;
+        return true;
+      },
+      [] {});
+  passed &= Check(!ignoredEventAttempted && ignoredInstallerCalls == 0,
+                  "non-post-load events do not consume the attempt");
+
+  struct StartupAbort final : std::runtime_error {
+    StartupAbort() : std::runtime_error("startup aborted") {}
+  };
+  std::atomic_bool failedAttempted{false};
+  int failedInstallerCalls = 0;
+  int abortCalls = 0;
+  bool continuedAfterFailure = false;
+  try {
+    nsv_patch::HandlePostLoadInstallation(
+        true, failedAttempted,
+        [&] {
+          ++failedInstallerCalls;
+          return false;
+        },
+        [&] {
+          ++abortCalls;
+          throw StartupAbort{};
+        });
+    continuedAfterFailure = true;
+  } catch (const StartupAbort &) {
+  }
+  passed &= Check(failedInstallerCalls == 1 && abortCalls == 1 &&
+                      !continuedAfterFailure,
+                  "failed post-load installation reaches the abort boundary");
+
   const auto valid = ValidState();
   const auto ready = nsv_patch::MakePatchPlan(valid);
   passed &= Check(ready.status == nsv_patch::PlanStatus::kReady,
@@ -361,6 +423,19 @@ int main() {
           changedUpdateCombat.compareExchangeCalls[Index(
               nsv_patch::PointerLocation::kUpdateCombat)] == 1,
       "real UpdateCombat ownership loss preserves the monotonic partial state");
+
+  FakeBackend desiredUpdateCombat(valid);
+  desiredUpdateCombat.beforeExchangeMutation = {
+      true, nsv_patch::PointerLocation::kUpdateCombat, 1,
+      nsv_patch::PointerLocation::kUpdateCombat, plan.updateCombat};
+  const auto desiredUpdateCombatResult =
+      nsv_patch::ApplyPatch(desiredUpdateCombat, valid, plan);
+  passed &= Check(
+      desiredUpdateCombatResult.status ==
+              nsv_patch::ApplyStatus::kPublishIncomplete &&
+          desiredUpdateCombatResult.pointersMatchPlan &&
+          desiredUpdateCombatResult.protectionsRestored,
+      "ownership loss remains conservative when the final snapshot matches");
 
   FakeBackend vtableProtectFailure(valid);
   vtableProtectFailure.makeVtableWritable = false;
