@@ -31,11 +31,21 @@ DLL SHA-256 is
 If any precondition does not match, it logs the mismatch and changes nothing.
 
 The existing VR `UpdateCombat` target must also be a distinct executable
-address. Pointer publication uses compare/exchange operations bound to the
-state that was validated. A competing hook causes a no-op or a conditional
-rollback; the patch never deliberately overwrites a newer value. Every page
-protection transition and residual pointer state is checked before the log
-describes the outcome as committed or restored.
+address. The correction runs once from SKSE's synchronous `kPostLoad`
+dispatcher, before gameplay begins. Pointer publication uses compare/exchange
+operations bound to the state that was validated. If an unexpected writer is
+observed, publication stops without overwriting it. The patch deliberately
+does not roll back a partial publication because reversing dependent pointers
+can re-expose the misplaced thunk with an incompatible call chain.
+
+The three pointer changes are not a lock-free multi-word transaction. They
+rely on SKSE's serialized post-load listener dispatch; plugins that modify the
+same hook storage concurrently from private worker threads are unsupported.
+Page protections are restored before the final pointer snapshot used for the
+terminal diagnostic. SKSE's
+[`Dispatch_Message`](https://github.com/ianpatt/skse64/blob/master/skse64/PluginManager.cpp)
+implementation invokes each registered listener inline before advancing to the
+next listener.
 
 The misplaced E4 hook is removed before its stored original is changed. The
 corrected E6 hook is published last, so the thunk is never intentionally live

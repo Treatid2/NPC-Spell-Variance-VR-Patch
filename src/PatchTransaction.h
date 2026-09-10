@@ -10,8 +10,7 @@ enum class ApplyStatus {
   kCommitted,
   kStateChanged,
   kProtectionPreparationFailed,
-  kPublishFailedRolledBack,
-  kRecoveryIncomplete,
+  kPublishIncomplete,
   kProtectionRestoreFailed,
 };
 
@@ -59,88 +58,53 @@ template <class Backend>
     const bool vtable = a_backend.RestoreVtableProtection();
     return storage && vtable;
   };
+  const auto finish = [&](ApplyStatus a_status) {
+    const bool protectionsRestored = restoreProtections();
+    const bool pointersMatchPlan = matchesPlan();
+    const bool pointersMatchObserved = matchesObserved();
+    auto finalStatus = a_status;
+    if (!protectionsRestored) {
+      finalStatus = ApplyStatus::kProtectionRestoreFailed;
+    } else if (a_status == ApplyStatus::kCommitted && !pointersMatchPlan) {
+      finalStatus = ApplyStatus::kPublishIncomplete;
+    }
+    return ApplyResult{
+        finalStatus,
+        pointersMatchPlan, pointersMatchObserved, protectionsRestored};
+  };
 
   if (!matchesObserved()) {
-    const bool protectionsRestored = restoreProtections();
-    return {protectionsRestored ? ApplyStatus::kStateChanged
-                                : ApplyStatus::kProtectionRestoreFailed,
-            false, false, protectionsRestored};
+    return finish(ApplyStatus::kStateChanged);
   }
-
-  bool changedGetAlpha = false;
-  bool changedStorage = false;
-  bool changedUpdateCombat = false;
 
   // Make the misplaced thunk unreachable before changing its call chain.
-  changedGetAlpha = a_backend.CompareExchange(
-      PointerLocation::kGetAlpha, a_observed.currentGetAlpha, a_plan.getAlpha);
-  if (changedGetAlpha) {
-    changedStorage = a_backend.CompareExchange(PointerLocation::kStoredOriginal,
-                                               a_observed.storedOriginal,
-                                               a_plan.storedOriginal);
-  }
-  if (changedStorage) {
-    changedUpdateCombat = a_backend.CompareExchange(
-        PointerLocation::kUpdateCombat, a_observed.currentUpdateCombat,
-        a_plan.updateCombat);
+  if (!a_backend.CompareExchange(PointerLocation::kGetAlpha,
+                                 a_observed.currentGetAlpha,
+                                 a_plan.getAlpha)) {
+    return finish(ApplyStatus::kPublishIncomplete);
   }
 
-  if (changedStorage && changedUpdateCombat && changedGetAlpha &&
-      matchesPlan()) {
-    const bool protectionsRestored = restoreProtections();
-    return {protectionsRestored ? ApplyStatus::kCommitted
-                                : ApplyStatus::kProtectionRestoreFailed,
-            true, false, protectionsRestored};
+  // Installation runs in the serialized SKSE post-load dispatcher. These
+  // checks fail closed if a non-cooperating writer is nevertheless observed.
+  if (!matches(PointerLocation::kGetAlpha, a_plan.getAlpha) ||
+      !matches(PointerLocation::kUpdateCombat,
+               a_observed.currentUpdateCombat) ||
+      !a_backend.CompareExchange(PointerLocation::kStoredOriginal,
+                                 a_observed.storedOriginal,
+                                 a_plan.storedOriginal)) {
+    return finish(ApplyStatus::kPublishIncomplete);
   }
 
-  // Stop when a failed undo can leave the thunk reachable through a newer hook.
-  bool recoveryBlocked = false;
-  if (changedUpdateCombat) {
-    recoveryBlocked = !a_backend.CompareExchange(
-        PointerLocation::kUpdateCombat, a_plan.updateCombat,
-        a_observed.currentUpdateCombat);
+  if (!matches(PointerLocation::kGetAlpha, a_plan.getAlpha) ||
+      !matches(PointerLocation::kStoredOriginal, a_plan.storedOriginal) ||
+      !a_backend.CompareExchange(PointerLocation::kUpdateCombat,
+                                 a_observed.currentUpdateCombat,
+                                 a_plan.updateCombat)) {
+    return finish(ApplyStatus::kPublishIncomplete);
   }
 
-  if (!recoveryBlocked && changedStorage) {
-    const bool thunkUnreachable =
-        matches(PointerLocation::kGetAlpha, a_plan.getAlpha) &&
-        matches(PointerLocation::kUpdateCombat,
-                a_observed.currentUpdateCombat);
-    if (!thunkUnreachable) {
-      recoveryBlocked = true;
-    } else if (!a_backend.CompareExchange(PointerLocation::kStoredOriginal,
-                                          a_plan.storedOriginal,
-                                          a_observed.storedOriginal) &&
-               !matches(PointerLocation::kStoredOriginal,
-                        a_observed.storedOriginal)) {
-      recoveryBlocked = true;
-    }
-  }
-
-  if (!recoveryBlocked && changedGetAlpha) {
-    const bool originalChainRestored =
-        matches(PointerLocation::kGetAlpha, a_plan.getAlpha) &&
-        matches(PointerLocation::kUpdateCombat,
-                a_observed.currentUpdateCombat) &&
-        matches(PointerLocation::kStoredOriginal, a_observed.storedOriginal);
-    if (!originalChainRestored ||
-        !a_backend.CompareExchange(PointerLocation::kGetAlpha,
-                                   a_plan.getAlpha,
-                                   a_observed.currentGetAlpha)) {
-      recoveryBlocked = true;
-    }
-  }
-
-  const bool pointersRestored = matchesObserved();
-  const bool protectionsRestored = restoreProtections();
-  if (!pointersRestored) {
-    return {ApplyStatus::kRecoveryIncomplete, false, false,
-            protectionsRestored};
-  }
-  if (!protectionsRestored) {
-    return {ApplyStatus::kProtectionRestoreFailed, false, true, false};
-  }
-  return {ApplyStatus::kPublishFailedRolledBack, false, true, true};
+  return finish(matchesPlan() ? ApplyStatus::kCommitted
+                              : ApplyStatus::kPublishIncomplete);
 }
 
 } // namespace nsv_patch

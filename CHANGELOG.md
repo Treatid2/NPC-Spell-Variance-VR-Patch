@@ -1,11 +1,12 @@
 # Changelog
 
-## 1.0.2 - 2026-09-09
+## 1.0.2 - 2026-09-10
 
-- Stop dependent rollback when a newer hook may still reach the corrected
-  thunk.
-- Preserve the thunk's compatible original-function chain during contested
-  recovery.
+- Use monotonic publication and never reverse a partial hook correction.
+- Stop at observed contention without overwriting a newer pointer value.
+- Document the serialized SKSE post-load boundary instead of promising an
+  impossible lock-free transaction across three independently written slots.
+- Capture terminal pointer flags after page-protection restoration.
 - Report pointer drift during writable-page preparation without claiming the
   earlier tuple was verified.
 - Retain simultaneous pointer and page-protection recovery failures in the

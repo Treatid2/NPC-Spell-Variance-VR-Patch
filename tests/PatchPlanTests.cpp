@@ -41,8 +41,8 @@ struct FakeBackend {
 
   std::array<std::uintptr_t, 3> values{};
   std::array<int, 3> compareExchangeCalls{};
-  std::array<int, 3> failCompareExchangeCall{};
   std::vector<nsv_patch::PointerLocation> exchangeOrder{};
+  ExchangeMutation beforeExchangeMutation{};
   ExchangeMutation exchangeMutation{};
   bool makeVtableWritable = true;
   bool makeStorageWritable = true;
@@ -50,6 +50,8 @@ struct FakeBackend {
   bool restoreStorage = true;
   bool mutateDuringVtablePreparation = false;
   bool mutateDuringStoragePreparation = false;
+  bool mutateDuringVtableRestore = false;
+  bool mutateDuringStorageRestore = false;
   nsv_patch::PointerLocation preparationMutationTarget =
       nsv_patch::PointerLocation::kUpdateCombat;
   std::uintptr_t preparationMutationValue = 0;
@@ -74,10 +76,16 @@ struct FakeBackend {
   }
   bool RestoreVtableProtection() {
     ++restoreVtableCalls;
+    if (mutateDuringVtableRestore) {
+      values[Index(preparationMutationTarget)] = preparationMutationValue;
+    }
     return restoreVtable;
   }
   bool RestoreStorageProtection() {
     ++restoreStorageCalls;
+    if (mutateDuringStorageRestore) {
+      values[Index(preparationMutationTarget)] = preparationMutationValue;
+    }
     return restoreStorage;
   }
 
@@ -90,9 +98,13 @@ struct FakeBackend {
     const auto index = Index(a_location);
     ++compareExchangeCalls[index];
     exchangeOrder.push_back(a_location);
-    const bool succeeded =
-        failCompareExchangeCall[index] != compareExchangeCalls[index] &&
-        values[index] == a_expected;
+    if (beforeExchangeMutation.enabled &&
+        beforeExchangeMutation.trigger == a_location &&
+        beforeExchangeMutation.triggerCall == compareExchangeCalls[index]) {
+      values[Index(beforeExchangeMutation.target)] =
+          beforeExchangeMutation.value;
+    }
+    const bool succeeded = values[index] == a_expected;
     if (succeeded) {
       values[index] = a_value;
     }
@@ -228,67 +240,45 @@ int main() {
                       nsv_patch::PointerLocation::kUpdateCombat},
       "publication order makes the thunk unreachable before changing its "
       "chain and publishes it last");
+  passed &= Check(success.restoreStorageCalls == 1 &&
+                      success.restoreVtableCalls == 1,
+                  "successful publication restores both pages once");
 
   FakeBackend stateDrift(valid);
   ++stateDrift.values[Index(nsv_patch::PointerLocation::kUpdateCombat)];
   const auto drifted = nsv_patch::ApplyPatch(stateDrift, valid, plan);
-  passed &= Check(drifted.status == nsv_patch::ApplyStatus::kStateChanged,
-                  "pre-publication pointer drift is rejected");
-
-  for (const auto failureLocation :
-       {nsv_patch::PointerLocation::kStoredOriginal,
-        nsv_patch::PointerLocation::kUpdateCombat,
-        nsv_patch::PointerLocation::kGetAlpha}) {
-    FakeBackend publishFailure(valid);
-    publishFailure.failCompareExchangeCall[Index(failureLocation)] = 1;
-    const auto result = nsv_patch::ApplyPatch(publishFailure, valid, plan);
-    passed &= Check(
-        result.status == nsv_patch::ApplyStatus::kPublishFailedRolledBack &&
-            result.pointersMatchObserved && result.protectionsRestored,
-        "publication failure rolls back and restores protections");
-  }
-
-  FakeBackend failedRecovery(valid);
-  failedRecovery.failCompareExchangeCall[Index(
-      nsv_patch::PointerLocation::kUpdateCombat)] = 1;
-  failedRecovery
-      .failCompareExchangeCall[Index(nsv_patch::PointerLocation::kGetAlpha)] =
-      2;
-  const auto recovery = nsv_patch::ApplyPatch(failedRecovery, valid, plan);
-  passed &=
-      Check(recovery.status == nsv_patch::ApplyStatus::kRecoveryIncomplete,
-            "contested rollback reports incomplete recovery");
+  passed &= Check(
+      drifted.status == nsv_patch::ApplyStatus::kStateChanged &&
+          stateDrift.exchangeOrder.empty() &&
+          stateDrift.restoreStorageCalls == 1 &&
+          stateDrift.restoreVtableCalls == 1,
+      "pre-publication pointer drift is rejected without publication");
 
   constexpr auto newerWrapper = kSkyrimBase + 0x765430;
-  FakeBackend newerE6Writer(valid);
-  newerE6Writer.exchangeMutation = {
-      true, nsv_patch::PointerLocation::kUpdateCombat, 1,
-      nsv_patch::PointerLocation::kUpdateCombat, newerWrapper};
-  const auto newerE6Recovery =
-      nsv_patch::ApplyPatch(newerE6Writer, valid, plan);
+  FakeBackend changedGetAlpha(valid);
+  changedGetAlpha.beforeExchangeMutation = {
+      true, nsv_patch::PointerLocation::kGetAlpha, 1,
+      nsv_patch::PointerLocation::kGetAlpha, newerWrapper};
+  const auto getAlphaLoss =
+      nsv_patch::ApplyPatch(changedGetAlpha, valid, plan);
   passed &= Check(
-      newerE6Recovery.status ==
-              nsv_patch::ApplyStatus::kRecoveryIncomplete &&
-          newerE6Writer.values[Index(nsv_patch::PointerLocation::kGetAlpha)] ==
-              plan.getAlpha &&
-          newerE6Writer
-                  .values[Index(nsv_patch::PointerLocation::kUpdateCombat)] ==
+      getAlphaLoss.status == nsv_patch::ApplyStatus::kPublishIncomplete &&
+          changedGetAlpha
+                  .values[Index(nsv_patch::PointerLocation::kGetAlpha)] ==
               newerWrapper &&
-          newerE6Writer
-                  .values[Index(nsv_patch::PointerLocation::kStoredOriginal)] ==
-              plan.storedOriginal,
-      "newer E6 writer keeps the corrected thunk chain intact");
+          changedGetAlpha.exchangeOrder ==
+              std::vector{nsv_patch::PointerLocation::kGetAlpha},
+      "real GetAlpha ownership loss is preserved without later writes");
 
   constexpr auto competingOriginal = kSkyrimBase + 0x765480;
   FakeBackend changedOriginal(valid);
-  changedOriginal.exchangeMutation = {
-      true, nsv_patch::PointerLocation::kGetAlpha, 1,
+  changedOriginal.beforeExchangeMutation = {
+      true, nsv_patch::PointerLocation::kStoredOriginal, 1,
       nsv_patch::PointerLocation::kStoredOriginal, competingOriginal};
-  const auto changedOriginalRecovery =
+  const auto originalLoss =
       nsv_patch::ApplyPatch(changedOriginal, valid, plan);
   passed &= Check(
-      changedOriginalRecovery.status ==
-              nsv_patch::ApplyStatus::kRecoveryIncomplete &&
+      originalLoss.status == nsv_patch::ApplyStatus::kPublishIncomplete &&
           changedOriginal
                   .values[Index(nsv_patch::PointerLocation::kGetAlpha)] ==
               plan.getAlpha &&
@@ -298,7 +288,79 @@ int main() {
           changedOriginal
                   .values[Index(nsv_patch::PointerLocation::kStoredOriginal)] ==
               competingOriginal,
-      "changed stored original is not exposed through the GetAlpha slot");
+      "real stored-original ownership loss leaves the donor thunk unreachable");
+  passed &= Check(
+      changedOriginal.exchangeOrder ==
+          std::vector{nsv_patch::PointerLocation::kGetAlpha,
+                      nsv_patch::PointerLocation::kStoredOriginal},
+      "stored-original ownership loss stops before UpdateCombat publication");
+
+  FakeBackend lateOriginalDrift(valid);
+  lateOriginalDrift.exchangeMutation = {
+      true, nsv_patch::PointerLocation::kStoredOriginal, 1,
+      nsv_patch::PointerLocation::kStoredOriginal,
+      valid.storedOriginal};
+  const auto lateOriginalResult =
+      nsv_patch::ApplyPatch(lateOriginalDrift, valid, plan);
+  passed &= Check(
+      lateOriginalResult.status ==
+              nsv_patch::ApplyStatus::kPublishIncomplete &&
+          lateOriginalDrift
+                  .values[Index(nsv_patch::PointerLocation::kGetAlpha)] ==
+              plan.getAlpha &&
+          lateOriginalDrift
+                  .values[Index(nsv_patch::PointerLocation::kUpdateCombat)] ==
+              valid.currentUpdateCombat &&
+          lateOriginalDrift.exchangeOrder ==
+              std::vector{nsv_patch::PointerLocation::kGetAlpha,
+                          nsv_patch::PointerLocation::kStoredOriginal},
+      "late stored-original drift prevents UpdateCombat publication");
+
+  FakeBackend lateGetAlphaDrift(valid);
+  lateGetAlphaDrift.exchangeMutation = {
+      true, nsv_patch::PointerLocation::kStoredOriginal, 1,
+      nsv_patch::PointerLocation::kGetAlpha, newerWrapper};
+  const auto lateGetAlphaResult =
+      nsv_patch::ApplyPatch(lateGetAlphaDrift, valid, plan);
+  passed &= Check(
+      lateGetAlphaResult.status ==
+              nsv_patch::ApplyStatus::kPublishIncomplete &&
+          lateGetAlphaDrift
+                  .values[Index(nsv_patch::PointerLocation::kGetAlpha)] ==
+              newerWrapper &&
+          lateGetAlphaDrift
+                  .values[Index(nsv_patch::PointerLocation::kUpdateCombat)] ==
+              valid.currentUpdateCombat &&
+          lateGetAlphaDrift.exchangeOrder ==
+              std::vector{nsv_patch::PointerLocation::kGetAlpha,
+                          nsv_patch::PointerLocation::kStoredOriginal},
+      "late GetAlpha drift prevents UpdateCombat publication");
+
+  FakeBackend changedUpdateCombat(valid);
+  changedUpdateCombat.beforeExchangeMutation = {
+      true, nsv_patch::PointerLocation::kUpdateCombat, 1,
+      nsv_patch::PointerLocation::kUpdateCombat, newerWrapper};
+  const auto updateCombatLoss =
+      nsv_patch::ApplyPatch(changedUpdateCombat, valid, plan);
+  passed &= Check(
+      updateCombatLoss.status ==
+              nsv_patch::ApplyStatus::kPublishIncomplete &&
+          changedUpdateCombat
+                  .values[Index(nsv_patch::PointerLocation::kGetAlpha)] ==
+              plan.getAlpha &&
+          changedUpdateCombat
+                  .values[Index(nsv_patch::PointerLocation::kUpdateCombat)] ==
+              newerWrapper &&
+          changedUpdateCombat
+                  .values[Index(nsv_patch::PointerLocation::kStoredOriginal)] ==
+              plan.storedOriginal &&
+          changedUpdateCombat.compareExchangeCalls[Index(
+              nsv_patch::PointerLocation::kGetAlpha)] == 1 &&
+          changedUpdateCombat.compareExchangeCalls[Index(
+              nsv_patch::PointerLocation::kStoredOriginal)] == 1 &&
+          changedUpdateCombat.compareExchangeCalls[Index(
+              nsv_patch::PointerLocation::kUpdateCombat)] == 1,
+      "real UpdateCombat ownership loss preserves the monotonic partial state");
 
   FakeBackend vtableProtectFailure(valid);
   vtableProtectFailure.makeVtableWritable = false;
@@ -340,6 +402,18 @@ int main() {
       "storage preparation failure reports pointer drift and restores the "
       "vtable protection");
 
+  FakeBackend storageFailureRestoreDrift(valid);
+  storageFailureRestoreDrift.makeStorageWritable = false;
+  storageFailureRestoreDrift.mutateDuringVtableRestore = true;
+  storageFailureRestoreDrift.preparationMutationValue = newerWrapper;
+  const auto storageFailureRestoreDriftResult =
+      nsv_patch::ApplyPatch(storageFailureRestoreDrift, valid, plan);
+  passed &= Check(
+      storageFailureRestoreDriftResult.status ==
+              nsv_patch::ApplyStatus::kProtectionPreparationFailed &&
+          !storageFailureRestoreDriftResult.pointersMatchObserved,
+      "preparation result snapshots pointers after vtable restoration");
+
   FakeBackend failedPreparationRestore(valid);
   failedPreparationRestore.makeStorageWritable = false;
   failedPreparationRestore.restoreVtable = false;
@@ -360,33 +434,47 @@ int main() {
                 failedCommitRestore.restoreVtableCalls == 1,
             "committed state with protection failure is reported accurately");
 
-  FakeBackend failedRollbackRestore(valid);
-  failedRollbackRestore.failCompareExchangeCall[Index(
-      nsv_patch::PointerLocation::kUpdateCombat)] = 1;
-  failedRollbackRestore.restoreVtable = false;
-  const auto rollbackRestore =
-      nsv_patch::ApplyPatch(failedRollbackRestore, valid, plan);
-  passed &=
-      Check(rollbackRestore.status ==
-                    nsv_patch::ApplyStatus::kProtectionRestoreFailed &&
-                rollbackRestore.pointersMatchObserved &&
-                failedRollbackRestore.restoreStorageCalls == 1 &&
-                failedRollbackRestore.restoreVtableCalls == 1,
-            "rolled-back state with protection failure is reported accurately");
+  FakeBackend commitRestoreDrift(valid);
+  commitRestoreDrift.mutateDuringStorageRestore = true;
+  commitRestoreDrift.preparationMutationValue = newerWrapper;
+  const auto commitRestoreDriftResult =
+      nsv_patch::ApplyPatch(commitRestoreDrift, valid, plan);
+  passed &= Check(
+      commitRestoreDriftResult.status ==
+              nsv_patch::ApplyStatus::kPublishIncomplete &&
+          !commitRestoreDriftResult.pointersMatchPlan &&
+          commitRestoreDriftResult.protectionsRestored,
+      "commit result snapshots pointer drift after protection restoration");
+
+  FakeBackend bothRestoreFailures(valid);
+  bothRestoreFailures.restoreStorage = false;
+  bothRestoreFailures.restoreVtable = false;
+  const auto bothRestoreResult =
+      nsv_patch::ApplyPatch(bothRestoreFailures, valid, plan);
+  passed &= Check(
+      bothRestoreResult.status ==
+              nsv_patch::ApplyStatus::kProtectionRestoreFailed &&
+          !bothRestoreResult.protectionsRestored &&
+          bothRestoreFailures.restoreStorageCalls == 1 &&
+          bothRestoreFailures.restoreVtableCalls == 1,
+      "both protection restoration failures are attempted and reported");
 
   FakeBackend compoundRecoveryFailure(valid);
-  compoundRecoveryFailure.exchangeMutation = {
+  compoundRecoveryFailure.beforeExchangeMutation = {
       true, nsv_patch::PointerLocation::kUpdateCombat, 1,
       nsv_patch::PointerLocation::kUpdateCombat, newerWrapper};
   compoundRecoveryFailure.restoreStorage = false;
   const auto compoundRecovery =
       nsv_patch::ApplyPatch(compoundRecoveryFailure, valid, plan);
   passed &= Check(
-      compoundRecovery.status == nsv_patch::ApplyStatus::kRecoveryIncomplete &&
+      compoundRecovery.status ==
+              nsv_patch::ApplyStatus::kProtectionRestoreFailed &&
           !compoundRecovery.protectionsRestored &&
+          !compoundRecovery.pointersMatchPlan &&
+          !compoundRecovery.pointersMatchObserved &&
           compoundRecoveryFailure.restoreStorageCalls == 1 &&
           compoundRecoveryFailure.restoreVtableCalls == 1,
-      "incomplete pointer and protection recovery retain both failure facts");
+      "incomplete publication and protection recovery retain both facts");
 
   return passed ? 0 : 1;
 }

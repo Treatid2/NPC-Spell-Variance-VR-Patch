@@ -429,22 +429,13 @@ private:
                        "after validation.");
     }
     return false;
-  case nsv_patch::ApplyStatus::kPublishFailedRolledBack:
-    logger::critical("Conditional hook publication failed; verified original "
-                     "pointer state and page protections were restored.");
-    return false;
-  case nsv_patch::ApplyStatus::kRecoveryIncomplete:
-    if (result.protectionsRestored) {
-      logger::critical(
-          "Hook publication failed and another writer prevented a complete "
-          "rollback. Page protections were restored, but restart Skyrim "
-          "before continuing; the residual pointer state is not safe.");
-    } else {
-      logger::critical(
-          "Hook publication failed and another writer prevented a complete "
-          "rollback. Page-protection recovery also failed. Restart Skyrim "
-          "before continuing; the residual state is not safe.");
-    }
+  case nsv_patch::ApplyStatus::kPublishIncomplete:
+    logger::critical(
+        "Hook publication did not complete. Page protections were restored "
+        "and the final pointer snapshot was not the complete correction. "
+        "No rollback was attempted because reversing a partial publication "
+        "could expose the misplaced thunk with an incompatible call chain. "
+        "Restart Skyrim before continuing.");
     return false;
   case nsv_patch::ApplyStatus::kProtectionRestoreFailed:
     if (result.pointersMatchPlan) {
@@ -480,7 +471,7 @@ void OnSKSEMessage(SKSE::MessagingInterface::Message *a_message) {
 SKSEPluginLoad(const SKSE::LoadInterface *a_skse) {
   SKSE::Init(a_skse);
   logger::init();
-  logger::info("NPC Spell Variance VR Patch 1.0.1 loading.");
+  logger::info("NPC Spell Variance VR Patch 1.0.2 loading.");
 
   auto *messaging = SKSE::GetMessagingInterface();
   if (!messaging || !messaging->RegisterListener(OnSKSEMessage)) {
